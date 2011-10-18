@@ -1,5 +1,18 @@
 A set of utilities and improvements for managing data (fixtures specifically) in Django.
 
+Install
+=======
+
+::
+
+    INSTALLED_APPS = (
+        # ...
+        'datatools',
+    )
+
+Commands
+========
+
 dumpdata
 --------
 
