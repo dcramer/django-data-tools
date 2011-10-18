@@ -1,7 +1,10 @@
+django-data-tools
+=================
+
 A set of utilities and improvements for managing data (fixtures specifically) in Django.
 
 Install
-=======
+-------
 
 ::
 
@@ -11,10 +14,10 @@ Install
     )
 
 Commands
-========
+--------
 
 dumpdata
---------
+~~~~~~~~
 
 An improved version of the ``manage.py dumpdata`` command:
 
