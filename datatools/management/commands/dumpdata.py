@@ -16,6 +16,7 @@ import itertools
 from optparse import make_option
 from collections import defaultdict
 
+
 class Command(BaseCommand):
     option_list = BaseCommand.option_list + (
         make_option('--format', default='json', dest='format',
@@ -25,7 +26,7 @@ class Command(BaseCommand):
         make_option('--database', action='store', dest='database',
             default=DEFAULT_DB_ALIAS, help='Nominates a specific database to load '
                 'fixtures into. Defaults to the "default" database.'),
-        make_option('-e', '--exclude', dest='exclude',action='append', default=[],
+        make_option('-e', '--exclude', dest='exclude', action='append', default=[],
             help='App to exclude (use multiple --exclude to exclude multiple apps).'),
         make_option('-n', '--natural', action='store_true', dest='use_natural_keys', default=False,
             help='Use natural keys if they are available.'),
@@ -163,6 +164,7 @@ class Command(BaseCommand):
             if show_traceback:
                 raise
             raise CommandError("Unable to serialize database: %s" % e)
+
 
 def sort_dependencies(objects):
     """
