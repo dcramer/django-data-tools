@@ -2,7 +2,7 @@
 datatools.management.commands.dumpdata
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:copyright: (c) 2011 DISQUS.
+:copyright: (c) 2011-2012 DISQUS.
 :license: Apache License 2.0, see LICENSE for more details.
 """
 
@@ -15,6 +15,7 @@ from django.db.models import ForeignKey
 import itertools
 from optparse import make_option
 from collections import defaultdict
+from datatools.query import RangeQuerySetWrapper
 
 
 class Command(BaseCommand):
@@ -32,31 +33,14 @@ class Command(BaseCommand):
             help='Use natural keys if they are available.'),
         make_option('-l', '--limit', dest='limit', type='int', default=None,
             help='Limit the number of objects per app.'),
-        make_option('-s', '--sort', dest='sort', default='asc',
-            help='Change the sort order (useful with limit). Defaults to asc'),
+        make_option('-s', '--sort', dest='sort', default=None,
+            help='Change the sort order (useful with limit). Defaults to no sorting. Options are \'asc\' and \'desc\''),
     )
     help = 'Output the contents of the database as a fixture of the given format.'
     args = '[appname appname.ModelName ...]'
 
-    def handle(self, *app_labels, **options):
-        """
-        Serializes objects from the database.
-
-        Works much like Django's ``manage.py dumpdata``, except that it allows you to
-        limit and sort the apps that you're pulling in, as well as automatically follow
-        the dependency graph to pull in related objects.
-        """
-        # TODO: excluded_apps doesnt correctly handle foo.bar if you're not using app_labels
+    def _get_model_list(self, app_labels, exclude=()):
         from django.db.models import get_app, get_apps, get_model, get_models
-
-        format = options.get('format', 'json')
-        indent = options.get('indent', None)
-        limit = options.get('limit', None)
-        sort = options.get('sort', 'asc')
-        using = options.get('database', None)
-        exclude = options.get('exclude', [])
-        show_traceback = options.get('traceback', True)
-        use_natural_keys = options.get('use_natural_keys', False)
 
         excluded_apps = set(get_app(app_label) for app_label in exclude)
 
@@ -95,12 +79,50 @@ class Command(BaseCommand):
                     except ImproperlyConfigured:
                         raise CommandError("Unknown application: %s" % app_label)
                     model_list.update(get_models(app))
+        return model_list
+
+    def _get_query_set(self, model, sort=None, using=None):
+        qs = model._default_manager
+        if using:
+            qs = qs.using(using)
+        qs = qs.all()
+
+        if sort == 'desc':
+            qs = qs.order_by('-pk')
+        elif sort == 'asc':
+            qs = qs.order_by('pk')
+
+        return qs
+
+    def _can_dump_model(self, model, using=None):
+        if model._meta.proxy:
+            return False
+        if not router.allow_syncdb(using, model):
+            return False
+        return True
+
+    def handle(self, *app_labels, **options):
+        """
+        Serializes objects from the database.
+
+        Works much like Django's ``manage.py dumpdata``, except that it allows you to
+        limit and sort the apps that you're pulling in, as well as automatically follow
+        the dependency graph to pull in related objects.
+        """
+        # TODO: excluded_apps doesnt correctly handle foo.bar if you're not using app_labels
+        format = options.get('format', 'json')
+        indent = options.get('indent', None)
+        limit = options.get('limit', None)
+        sort = options.get('sort', None)
+        using = options.get('database', None)
+        exclude = options.get('exclude', [])
+        show_traceback = options.get('traceback', True)
+        use_natural_keys = options.get('use_natural_keys', False)
+
+        model_list = self._get_model_list(app_labels, exclude)
 
         # Check that the serialization format exists; this is a shortcut to
         # avoid collating all the objects and _then_ failing.
-        if format not in serializers.get_public_serializer_formats():
-            raise CommandError("Unknown serialization format: %s" % format)
-
         try:
             serializers.get_serializer(format)
         except KeyError:
@@ -109,51 +131,45 @@ class Command(BaseCommand):
         # Now collate the objects to be serialized.
         objects = []
         for model in model_list:
-            if not model._meta.proxy and router.allow_syncdb(using, model):
-                qs = model._default_manager
-                if using:
-                    qs = qs.using(using)
-                qs = qs.all()
+            if not self._can_dump_model(model, using):
+                continue
 
-                if sort == 'desc':
-                    qs = qs.order_by('-pk')
-                elif sort == 'asc':
-                    qs = qs.order_by('pk')
-                if limit:
-                    qs = qs[:limit]
+            qs = RangeQuerySetWrapper(self._get_query_set(model, sort, using), limit=limit)
 
-                results = list(qs)
-                if results:
-                    objs_to_check = [results[:]]
-                    while objs_to_check:
-                        i_objs = objs_to_check.pop(0)
-                        i_model = i_objs[0].__class__
+            results = list(qs)
+            if not results:
+                continue
 
-                        # Handle O2M dependencies
-                        for field in (f for f in i_model._meta.fields if isinstance(f, ForeignKey)):
-                            qs = field.rel.to._default_manager
-                            if using:
-                                qs = qs.using(using)
-                            i_res = [o for o
-                                     in qs.filter(pk__in=[getattr(r, field.column) for r in i_objs])
-                                     if o not in results]
-                            if i_res:
-                                objs_to_check.append(i_res)
-                                results.extend(i_res)
+            objs_to_check = [results[:]]
+            while objs_to_check:
+                i_objs = objs_to_check.pop(0)
+                i_model = i_objs[0].__class__
 
-                        # Handle M2M dependencies
-                        # TODO: this could be a lot more efficient on the SQL query
-                        for field in i_model._meta.many_to_many:
-                            i_res = [o for o
-                                     in itertools.chain(*[getattr(r, field.name).all() for r in i_objs])
-                                     if o not in results]
-                            if i_res:
-                                objs_to_check.append(i_res)
-                                results.extend(i_res)
+                # Handle O2M dependencies
+                for field in (f for f in i_model._meta.fields if isinstance(f, ForeignKey)):
+                    qs = field.rel.to._default_manager
+                    if using:
+                        qs = qs.using(using)
+                    i_res = [o for o
+                             in qs.filter(pk__in=[getattr(r, field.column) for r in i_objs])
+                             if o not in results]
+                    if i_res:
+                        objs_to_check.append(i_res)
+                        results.extend(i_res)
 
-                for obj in results:
-                    if obj not in objects:
-                        objects.append(obj)
+                # Handle M2M dependencies
+                # TODO: this could be a lot more efficient on the SQL query
+                for field in i_model._meta.many_to_many:
+                    i_res = [o for o
+                             in itertools.chain(*[getattr(r, field.name).all() for r in i_objs])
+                             if o not in results]
+                    if i_res:
+                        objs_to_check.append(i_res)
+                        results.extend(i_res)
+
+            for obj in results:
+                if obj not in objects:
+                    objects.append(obj)
 
         objects = sort_dependencies(objects)
 

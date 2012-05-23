@@ -29,3 +29,20 @@ An improved version of the ``manage.py dumpdata`` command:
 
     # Retrieve the latest 10000 thread objects with all their required dependencies
     python manage.py dumpdata forums.thread --limit=10000 --sort=desc
+
+Utilities
+---------
+
+RangeQuerySetWrapper
+~~~~~~~~~~~~~~~~~~~~
+
+Efficient iteration over a large collection of database objects, using a standard range
+pattern on the primary key.
+
+::
+
+    from datatools.query import RangeQuerySetWrapper
+
+    qs = RangeQuerySetWrapper(Model.objects.all(), limit=100000)
+    for obj in qs:
+        print "Got %r!" % obj
