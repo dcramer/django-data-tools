@@ -15,7 +15,6 @@ from django.db.models import ForeignKey
 import itertools
 from optparse import make_option
 from collections import defaultdict
-from datatools.query import RangeQuerySetWrapper
 
 
 def objects_from_queryset(queryset, using='default'):
