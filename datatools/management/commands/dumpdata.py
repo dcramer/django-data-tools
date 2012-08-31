@@ -18,6 +18,56 @@ from collections import defaultdict
 from datatools.query import RangeQuerySetWrapper
 
 
+def objects_from_queryset(queryset, using='default'):
+    """
+    Serializes objects from the database.
+
+    Works much like Django's ``manage.py dumpdata``, except that it allows you to
+    limit and sort the apps that you're pulling in, as well as automatically follow
+    the dependency graph to pull in related objects.
+    """
+    # Now collate the objects to be serialized.
+    objects = []
+
+    if using:
+        queryset = queryset.using(using)
+
+    results = list(queryset)
+    if not results:
+        return []
+
+    objs_to_check = [results[:]]
+    while objs_to_check:
+        i_objs = objs_to_check.pop(0)
+        i_model = i_objs[0].__class__
+
+        # Handle O2M dependencies
+        for field in (f for f in i_model._meta.fields if isinstance(f, ForeignKey)):
+            qs = field.rel.to._default_manager
+            if using:
+                qs = qs.using(using)
+            i_res = [o for o
+                     in qs.filter(pk__in=[getattr(r, field.column) for r in i_objs])
+                     if o not in results]
+            if i_res:
+                objs_to_check.append(i_res)
+                results.extend(i_res)
+
+        # Handle M2M dependencies
+        # TODO: this could be a lot more efficient on the SQL query
+        for field in i_model._meta.many_to_many:
+            i_res = [o for o
+                     in itertools.chain(*[getattr(r, field.name).all() for r in i_objs])
+                     if o not in results]
+            if i_res:
+                objs_to_check.append(i_res)
+                results.extend(i_res)
+
+    for obj in results:
+        if obj not in objects:
+            objects.append(obj)
+
+
 class Command(BaseCommand):
     option_list = BaseCommand.option_list + (
         make_option('--format', default='json', dest='format',
@@ -134,42 +184,9 @@ class Command(BaseCommand):
             if not self._can_dump_model(model, using):
                 continue
 
-            qs = RangeQuerySetWrapper(self._get_query_set(model, sort, using), limit=limit)
+            queryset = self._get_query_set(model, sort, using)[:limit]
 
-            results = list(qs)
-            if not results:
-                continue
-
-            objs_to_check = [results[:]]
-            while objs_to_check:
-                i_objs = objs_to_check.pop(0)
-                i_model = i_objs[0].__class__
-
-                # Handle O2M dependencies
-                for field in (f for f in i_model._meta.fields if isinstance(f, ForeignKey)):
-                    qs = field.rel.to._default_manager
-                    if using:
-                        qs = qs.using(using)
-                    i_res = [o for o
-                             in qs.filter(pk__in=[getattr(r, field.column) for r in i_objs])
-                             if o not in results]
-                    if i_res:
-                        objs_to_check.append(i_res)
-                        results.extend(i_res)
-
-                # Handle M2M dependencies
-                # TODO: this could be a lot more efficient on the SQL query
-                for field in i_model._meta.many_to_many:
-                    i_res = [o for o
-                             in itertools.chain(*[getattr(r, field.name).all() for r in i_objs])
-                             if o not in results]
-                    if i_res:
-                        objs_to_check.append(i_res)
-                        results.extend(i_res)
-
-            for obj in results:
-                if obj not in objects:
-                    objects.append(obj)
+            objects.extend(objects_from_queryset(queryset, using=using))
 
         objects = sort_dependencies(objects)
 
