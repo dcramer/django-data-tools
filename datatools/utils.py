@@ -45,7 +45,7 @@ def attach_foreignkey(objects, field, related=[], database=None):
         return
 
     if database is None:
-        database = list(objects)[0]._state.db or 'default'
+        database = list(objects)[0]._state.db
 
     is_foreignkey = isinstance(field, SingleRelatedObjectDescriptor)
 
@@ -73,8 +73,9 @@ def attach_foreignkey(objects, field, related=[], database=None):
     # values specified in select_related
     values = distinct(filter(None, (getattr(o, column) for o in objects)))
     if values:
-        qs = model.objects.filter(**{'%s__in' % lookup: values})\
-                  .using(database)
+        qs = model.objects.filter(**{'%s__in' % lookup: values})
+        if database:
+            qs = qs.using(database)
         if related:
             qs = qs.select_related(*related)
 
