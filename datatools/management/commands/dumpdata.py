@@ -67,6 +67,8 @@ def objects_from_queryset(queryset, using='default'):
         if obj not in objects:
             objects.append(obj)
 
+    return objects
+
 
 class Command(BaseCommand):
     option_list = BaseCommand.option_list + (
