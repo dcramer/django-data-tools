@@ -96,7 +96,13 @@ class Command(BaseCommand):
         excluded_apps = set(get_app(app_label) for app_label in exclude)
 
         if len(app_labels) == 0:
-            model_list = set(m for m in (get_models(a) for a in get_apps() if a not in excluded_apps))
+            model_list = [m for m in (get_models(a) for a in get_apps() if a not in excluded_apps)]
+            try:
+                # Pre 1.4 days, Django returned models as a flat list
+                model_list = set(model_list)
+            except TypeError:
+                # +1.4, model_list will be a list of lists that needs unfolded
+                model_list = set(m for _ in model_list for m in _)
         else:
             model_list = set()
             app_labels = list(app_labels)
